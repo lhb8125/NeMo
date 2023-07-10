@@ -163,7 +163,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
         normalization='layernorm',
         transformer_block_type='pre_ln',
         position_embedding_type='learned_absolute',
-        multi_query_attention=False,
+        num_query_groups=None,
         headscale=False,
         activations_checkpoint_granularity=None,
         sequence_parallel=False,
@@ -248,7 +248,7 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
                 megatron_amp_O2=megatron_amp_O2,
                 masked_softmax_fusion=masked_softmax_fusion,
                 attention_dropout=attention_dropout,
-                multi_query_attention=multi_query_attention,
+                num_query_groups=num_query_groups,
                 layer_type=layer_type,
                 megatron_legacy=megatron_legacy,
                 bias=bias,
@@ -322,7 +322,6 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
                 precision=precision,
                 apply_query_key_layer_scaling=apply_query_key_layer_scaling,
                 kv_channels=kv_channels,
-                multi_query_attention=multi_query_attention,
                 use_cpu_initialization=use_cpu_initialization,
                 megatron_amp_O2=megatron_amp_O2,
                 masked_softmax_fusion=masked_softmax_fusion,
@@ -526,6 +525,11 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
             if get_key_value:
                 attention_output, presents = attention_output
 
+            # If pre_ln_parallel_mlp, apply MLP after input_layernorm and adds to attention_output
+            if self.transformer_block_type == 'pre_ln_parallel_mlp':
+                parallel_mlp_output, _ = self.parallel_mlp(hidden_states)
+                attention_output = attention_output + parallel_mlp_output
+
             # If normformer, apply norm on the output of the self attention.
             if self.transformer_block_type == 'normformer':
                 # Normformer normalization
@@ -680,7 +684,7 @@ class ParallelTransformerLayer(ParallelTransformerLayer_):
         normalization='layernorm',
         transformer_block_type='pre_ln',
         position_embedding_type='learned_absolute',
-        multi_query_attention=False,
+        num_query_groups=None,
         headscale=False,
         activations_checkpoint_granularity=None,
         sequence_parallel=False,
@@ -724,7 +728,7 @@ class ParallelTransformerLayer(ParallelTransformerLayer_):
             transformer_block_type=transformer_block_type,
             position_embedding_type=position_embedding_type,
             headscale=headscale,
-            multi_query_attention=multi_query_attention,
+            num_query_groups=num_query_groups,
             activations_checkpoint_granularity=activations_checkpoint_granularity,
             sequence_parallel=sequence_parallel,
             gradient_accumulation_fusion=gradient_accumulation_fusion,
@@ -945,7 +949,7 @@ class ParallelTransformer(MegatronModule):
         use_emha=False,
         ub_tp_comm_overlap=False,
         normalize_attention_scores=True,
-        multi_query_attention=False,
+        num_query_groups=None,
         num_moe_experts=1,
         moe_frequency=1,
         moe_dropout=0.0,
@@ -969,7 +973,6 @@ class ParallelTransformer(MegatronModule):
         self.transformer_block_type = transformer_block_type
         self.layer_type = layer_type
         self.position_embedding_type = position_embedding_type
-        self.multi_query_attention = multi_query_attention
 
         self.inference_current_sequence_len = 0
         self.inference_params = None
@@ -1128,6 +1131,7 @@ class ParallelTransformer(MegatronModule):
                     activations_checkpoint_granularity=activations_checkpoint_granularity,
                     sequence_parallel=sequence_parallel,
                     normalize_attention_scores=normalize_attention_scores,
+                    num_query_groups=num_query_groups,
                     num_moe_experts=num_moe_experts,
                     moe_frequency=moe_frequency,
                     moe_dropout=moe_dropout,

@@ -86,7 +86,7 @@ def load_model(cls, checkpoint, strict, **kwargs):
 def load_config(llama_config):
     nemo_config = {}
     nemo_config['cfg'] = {}
-    nemo_config['cfg']['encoder_seq_length'] = llama_config['max_sequence_length']
+    #nemo_config['cfg']['encoder_seq_length'] = llama_config['max_sequence_length']
     nemo_config['cfg']['num_layers'] = int(llama_config['num_hidden_layers'])
     nemo_config['cfg']['hidden_size'] = llama_config['hidden_size']
     nemo_config['cfg']['ffn_hidden_size'] = llama_config['intermediate_size']
@@ -95,6 +95,10 @@ def load_config(llama_config):
     nemo_config['cfg']['init_method_std'] = llama_config['initializer_range']
     nemo_config['cfg']['normalization'] = 'rmsnorm'
     nemo_config['cfg']['layernorm_epsilon'] = llama_config['rms_norm_eps']
+    if 'num_key_value_heads' in llama_config:
+        nemo_config['cfg']['num_query_groups'] = llama_config['num_key_value_heads']
+    else:
+        nemo_config['cfg']['num_query_groups'] = None
     nemo_config['cfg']['pre_process'] = True
     nemo_config['cfg']['post_process'] = True
     nemo_config['cfg']['bias'] = False
@@ -120,7 +124,7 @@ def load_config(llama_config):
     nemo_config['cfg']['tokenizer']['tokenizer_model'] = 'null'
     nemo_config['cfg']['tokenizer']['sentencepiece_legacy'] = False
     nemo_config['cfg']['micro_batch_size'] = 1
-    nemo_config['cfg']['global_batch_size'] = 1
+    nemo_config['cfg']['global_batch_size'] = 2048
 
     nemo_config['cfg']['use_scaled_init_method'] = True
     nemo_config['cfg']['normalize_attention_scores'] = True
@@ -141,13 +145,13 @@ def convert(args):
     logging.info(f"loading checkpoint {args.in_file}")
     model = LlamaForCausalLM.from_pretrained(args.in_file)
     hf_config = vars(model.config)
-    nemo_config = load_config(hf_config)
     print(f"hf_config: {hf_config}")
+    print("named parameters:")
+    for name, param in model.named_parameters():
+       print(f"- {name}")
+    
+    nemo_config = load_config(hf_config)
     print(f"nemo_config: {nemo_config}")
-
-    # print("named parameters:")
-    # for name, param in model.named_parameters():
-    #    print(f"- {name}")
 
     hidden_size = hf_config["hidden_size"]
     head_num = hf_config["num_attention_heads"]
@@ -171,17 +175,25 @@ def convert(args):
 
     for l in range(int(num_layers)):
         print(f"converting layer {l}")
-        old_tensor_shape = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight'].size()
-        new_tensor_shape = (head_num, head_size) + model.state_dict()[
-            f'model.layers.{l}.self_attn.q_proj.weight'
-        ].size()[1:]
-        q = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight'].view(*new_tensor_shape)
-        k = model.state_dict()[f'model.layers.{l}.self_attn.k_proj.weight'].view(*new_tensor_shape)
-        v = model.state_dict()[f'model.layers.{l}.self_attn.v_proj.weight'].view(*new_tensor_shape)
-        qkv_weights = torch.cat((q, k, v), axis=1)
-        qkv_weights = qkv_weights.reshape([3 * hidden_size, hidden_size])
-        qkv_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.query_key_value.weight'
-        checkpoint['state_dict'][qkv_weights_base_name] = qkv_weights
+        if nemo_config['cfg']['num_query_groups'] is None :
+            old_tensor_shape = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight'].size()
+            new_tensor_shape = (head_num, head_size) + model.state_dict()[
+                f'model.layers.{l}.self_attn.q_proj.weight'
+            ].size()[1:]
+            q = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight'].view(*new_tensor_shape)
+            k = model.state_dict()[f'model.layers.{l}.self_attn.k_proj.weight'].view(*new_tensor_shape)
+            v = model.state_dict()[f'model.layers.{l}.self_attn.v_proj.weight'].view(*new_tensor_shape)
+            qkv_weights = torch.cat((q, k, v), axis=1)
+            qkv_weights = qkv_weights.reshape([3 * hidden_size, hidden_size])
+            qkv_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.query_key_value.weight'
+            checkpoint['state_dict'][qkv_weights_base_name] = qkv_weights
+        else:
+            q_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.query.weight'
+            kv_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.key_value.weight'
+            q = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight']
+            checkpoint['state_dict'][q_weights_base_name] = q
+            kv = torch.cat((model.state_dict()[f'model.layers.{l}.self_attn.k_proj.weight'], model.state_dict()[f'model.layers.{l}.self_attn.v_proj.weight']))
+            checkpoint['state_dict'][kv_weights_base_name] = kv
 
         # attention dense
         o_weight = model.state_dict()[f'model.layers.{l}.self_attn.o_proj.weight']

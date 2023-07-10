@@ -369,6 +369,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
             use_emha=self.cfg.get('use_emha', False),
             ub_tp_comm_overlap=self.cfg.get('ub_tp_comm_overlap', False),
             use_flash_attention=self.cfg.get('use_flash_attention', False),
+            num_query_groups=self.cfg.get('num_query_groups', None),
             megatron_legacy=self.cfg.get('megatron_legacy', False),
             seq_len_interpolation_factor=self.cfg.get('seq_len_interpolation_factor', None),
         )
