@@ -525,11 +525,6 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
             if get_key_value:
                 attention_output, presents = attention_output
 
-            # If pre_ln_parallel_mlp, apply MLP after input_layernorm and adds to attention_output
-            if self.transformer_block_type == 'pre_ln_parallel_mlp':
-                parallel_mlp_output, _ = self.parallel_mlp(hidden_states)
-                attention_output = attention_output + parallel_mlp_output
-
             # If normformer, apply norm on the output of the self attention.
             if self.transformer_block_type == 'normformer':
                 # Normformer normalization
