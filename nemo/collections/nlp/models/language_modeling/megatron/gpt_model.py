@@ -323,16 +323,19 @@ class GPTModel(MegatronModule):
             destination, prefix, keep_vars
         )
         # Save word_embeddings.
-        if self.post_process and not self.pre_process:
+        if self.post_process and not self.pre_process and self.share_embeddings_and_output_weights:
             state_dict_[self._word_embeddings_for_head_key] = self.word_embeddings.state_dict(
                 destination, prefix, keep_vars
             )
+
         return state_dict_
 
     def load_state_dict(self, state_dict, strict=True):
         """Customized load."""
 
         # Load word_embeddings.
+        # TODO
+        # Check if it works when share_embeddings_and_output_weights is false
         if self.post_process and not self.pre_process:
             self.word_embeddings.load_state_dict(state_dict[self._word_embeddings_for_head_key], strict=strict)
         if self._language_model_key in state_dict:
