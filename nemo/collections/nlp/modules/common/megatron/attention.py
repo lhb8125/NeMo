@@ -341,7 +341,7 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
 
         return hidden_states
 
-    def _allocate_memory(self, inference_max_sequence_len, batch_size, num_attention_heads, dtype, device):
+    def _allocate_memory(self, inference_max_sequence_len, batch_size, dtype, device):
         return torch.empty(
             inference_max_sequence_len,
             batch_size,
@@ -470,7 +470,7 @@ class ParallelAttention(MegatronModule, adapter_mixins.AdapterModuleMixin):
                 ],
                 dim=3
             )
-            query_layer = query_layer.view(query_layer.size(0), query_layer.size(1), -1, self.hidden_size_per_attention_head)
+            query_layer = query_layer.contiguous().view(query_layer.size(0), query_layer.size(1), -1, self.hidden_size_per_attention_head)
         else:
             # Attention heads [sk, b, h] --> [sk, b, (np * 2 * hn)]
             mixed_kv_layer, _ = self.key_value(encoder_output)

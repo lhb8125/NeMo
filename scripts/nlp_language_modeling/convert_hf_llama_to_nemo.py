@@ -159,7 +159,7 @@ def convert(args):
     head_num = hf_config["num_attention_heads"]
     head_size = hidden_size // head_num
     num_layers = hf_config["num_hidden_layers"]
-    num_query_groups = hf_config["num_key_value_heads"]
+    # num_query_groups = hf_config["num_key_value_heads"]
 
     # print(model)
     # print(model.state_dict())
@@ -177,37 +177,65 @@ def convert(args):
     rotary_embed_weight_base_name = f'model.language_model.rotary_pos_emb.inv_freq'
     checkpoint['state_dict'][rotary_embed_weight_base_name] = param_to_weights(rotary_embed_weight)
 
+    if nemo_config['cfg']['num_query_groups'] is None or nemo_config['cfg']['num_query_groups'] == head_num:
+        num_query_groups = head_num
+    else:
+        num_query_groups = nemo_config['cfg']['num_query_groups']
+        assert (
+            head_num % num_query_groups == 0
+        ), 'head_num must be divisible by num_query_groups'
+
     for l in range(int(num_layers)):
         print(f"converting layer {l}")
-        if nemo_config['cfg']['num_query_groups'] is None or nemo_config['cfg']['num_query_groups'] == head_num:
-            old_tensor_shape = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight'].size()
-            new_tensor_shape = (head_num, head_size) + model.state_dict()[
-                f'model.layers.{l}.self_attn.q_proj.weight'
-            ].size()[1:]
-            q = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight'].view(*new_tensor_shape)
-            k = model.state_dict()[f'model.layers.{l}.self_attn.k_proj.weight'].view(*new_tensor_shape)
-            v = model.state_dict()[f'model.layers.{l}.self_attn.v_proj.weight'].view(*new_tensor_shape)
-            qkv_weights = torch.cat((q, k, v), axis=1)
-            qkv_weights = qkv_weights.reshape([3 * hidden_size, hidden_size])
-            qkv_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.query_key_value.weight'
-            checkpoint['state_dict'][qkv_weights_base_name] = param_to_weights(qkv_weights)
-        else:
-            q_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.query.weight'
-            kv_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.key_value.weight'
-            q = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight']
-            checkpoint['state_dict'][q_weights_base_name] = q
-            original_k = model.state_dict()[f'model.layers.{l}.self_attn.k_proj.weight']
-            original_v = model.state_dict()[f'model.layers.{l}.self_attn.v_proj.weight']
-            assert original_k.size()[0] == head_size * num_query_groups
-            assert original_v.size()[0] == head_size * num_query_groups
-            assert head_num % num_query_groups == 0
-            #head_num_per_group = int(head_num / num_query_groups)
-            new_tensor_shape = (num_query_groups, head_size) + original_k.size()[1:]
-            k = original_k.view(*new_tensor_shape)
-            v = original_v.view(*new_tensor_shape)
-            kv_weights = torch.cat((k, v), axis=1)
-            kv_weights = kv_weights.reshape([-1, hidden_size])
-            checkpoint['state_dict'][kv_weights_base_name] = param_to_weights(kv_weights)
+        old_tensor_shape = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight'].size()
+        new_q_tensor_shape = (head_num, head_size) + old_tensor_shape[1:]
+        new_kv_tensor_shape = (num_query_groups,  head_size) + old_tensor_shape[1:]
+        q = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight'].view(*new_q_tensor_shape)
+        k = model.state_dict()[f'model.layers.{l}.self_attn.k_proj.weight'].view(*new_kv_tensor_shape)
+        v = model.state_dict()[f'model.layers.{l}.self_attn.v_proj.weight'].view(*new_kv_tensor_shape)
+        qkv_weights=torch.empty((0, head_size) + old_tensor_shape[1:])
+        heads_per_group = head_num // num_query_groups
+        print(k.shape)
+        print(k[0:1,:,:].shape)
+        for i in range(num_query_groups):
+            qkv_weights = torch.cat((qkv_weights, q[i * heads_per_group : (i+1) * heads_per_group,:,:]))
+            qkv_weights = torch.cat((qkv_weights, k[i:i+1,:,:]))
+            qkv_weights = torch.cat((qkv_weights, v[i:i+1,:,:]))
+        #qkv_weights = torch.cat((q, k, v), axis=1)
+        qkv_weights = qkv_weights.reshape([head_size * (head_num + 2 * num_query_groups), hidden_size])
+        qkv_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.query_key_value.weight'
+        checkpoint['state_dict'][qkv_weights_base_name] = param_to_weights(qkv_weights)
+
+#        if nemo_config['cfg']['num_query_groups'] is None or nemo_config['cfg']['num_query_groups'] == head_num:
+#            old_tensor_shape = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight'].size()
+#            new_k_tensor_shape = (head_num, head_size) + model.state_dict()[
+#                f'model.layers.{l}.self_attn.q_proj.weight'
+#            ].size()[1:]
+#            q = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight'].view(*new_tensor_shape)
+#            k = model.state_dict()[f'model.layers.{l}.self_attn.k_proj.weight'].view(*new_tensor_shape)
+#            v = model.state_dict()[f'model.layers.{l}.self_attn.v_proj.weight'].view(*new_tensor_shape)
+#            qkv_weights = torch.cat((q, k, v), axis=1)
+#            qkv_weights = qkv_weights.reshape([3 * hidden_size, hidden_size])
+#            qkv_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.query_key_value.weight'
+#            checkpoint['state_dict'][qkv_weights_base_name] = param_to_weights(qkv_weights)
+#        else:
+#            raise ValueError("wrong path")
+#            q_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.query.weight'
+#            kv_weights_base_name = f'model.language_model.encoder.layers.{l}.self_attention.key_value.weight'
+#            q = model.state_dict()[f'model.layers.{l}.self_attn.q_proj.weight']
+#            checkpoint['state_dict'][q_weights_base_name] = q
+#            original_k = model.state_dict()[f'model.layers.{l}.self_attn.k_proj.weight']
+#            original_v = model.state_dict()[f'model.layers.{l}.self_attn.v_proj.weight']
+#            assert original_k.size()[0] == head_size * num_query_groups
+#            assert original_v.size()[0] == head_size * num_query_groups
+#            assert head_num % num_query_groups == 0
+#            #head_num_per_group = int(head_num / num_query_groups)
+#            new_tensor_shape = (num_query_groups, head_size) + original_k.size()[1:]
+#            k = original_k.view(*new_tensor_shape)
+#            v = original_v.view(*new_tensor_shape)
+#            kv_weights = torch.cat((k, v), axis=1)
+#            kv_weights = kv_weights.reshape([-1, hidden_size])
+#            checkpoint['state_dict'][kv_weights_base_name] = param_to_weights(kv_weights)
 
         # attention dense
         o_weight = model.state_dict()[f'model.layers.{l}.self_attn.o_proj.weight']
