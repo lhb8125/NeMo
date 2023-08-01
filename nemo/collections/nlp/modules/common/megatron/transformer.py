@@ -35,6 +35,7 @@ from nemo.collections.nlp.modules.common.megatron.fused_bias_dropout_add import 
 )
 from nemo.collections.nlp.modules.common.megatron.fused_layer_norm import get_layer_norm
 from nemo.collections.nlp.modules.common.megatron.layer_norm_1p import LayerNorm1P, LPLayerNorm
+from nemo.collections.nlp.modules.common.megatron.rmsnorm import RMSNormP
 from nemo.collections.nlp.modules.common.megatron.layer_type import LayerType
 from nemo.collections.nlp.modules.common.megatron.mlp import ParallelMLP, SwitchMLP
 from nemo.collections.nlp.modules.common.megatron.module import MegatronModule
@@ -197,8 +198,8 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
 
         # the low_precision_layernorm does not require a bias term, whereas layernorm1p from apex
         # does require a bias, so it cannot be used for bias-less low precision LN such as in MPT-7B
-        if normalization not in ['layernorm', 'layernorm1p', 'rmsnorm', 'low_precision_layernorm']:
-            raise ValueError(f'normalization must be "layernorm", "layernorm1p" or "rmsnorm", found {normalization}')
+        if normalization not in ['layernorm', 'layernorm1p', 'rmsnorm', 'low_precision_layernorm', 'rmsnormp']:
+            raise ValueError(f'normalization must be "layernorm", "layernorm1p", "rmsnorm", "low_precision_layernorm" or "rmsnormp", found {normalization}')
 
         if transformer_block_type not in ['pre_ln', 'post_ln', 'normformer']:
             raise ValueError(
@@ -224,8 +225,12 @@ class ParallelTransformerLayer_(MegatronModule, adapter_mixins.AdapterModuleMixi
                 )
             elif normalization == 'low_precision_layernorm':
                 self.input_layernorm = LPLayerNorm(hidden_size, layernorm_epsilon)
-            else:
+            elif normalization == 'rmsnormp':
+                self.input_layernorm = RMSNormP(hidden_size, layernorm_epsilon, sequence_parallel_enabled=sequence_parallel)
+            elif normalization == 'rmsnorm':
                 self.input_layernorm = MixedFusedRMSNorm(hidden_size, layernorm_epsilon)
+            else:
+                raise ValueError("{normarlization} type is not supported")
             # for architectures such as MPT, there is no bias term even on the layernorms
             # this code allows us to remove the bias terms from the layernorm module
             # so that we can support MPT. However, certain apex-based LNs don't support

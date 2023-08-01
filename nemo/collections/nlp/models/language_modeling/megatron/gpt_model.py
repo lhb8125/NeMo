@@ -336,7 +336,7 @@ class GPTModel(MegatronModule):
         # Load word_embeddings.
         # TODO
         # Check if it works when share_embeddings_and_output_weights is false
-        if self.post_process and not self.pre_process:
+        if self.post_process and not self.pre_process and self.share_embeddings_and_output_weights:
             self.word_embeddings.load_state_dict(state_dict[self._word_embeddings_for_head_key], strict=strict)
         if self._language_model_key in state_dict:
             state_dict = state_dict[self._language_model_key]

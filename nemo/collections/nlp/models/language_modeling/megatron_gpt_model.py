@@ -662,8 +662,8 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
     def _append_sequence_parallel_module_grads(self, module, grads):
         """ Helper method for allreduce_sequence_parallel_gradients"""
 
-        for param in module.parameters():
-            sequence_parallel_param = getattr(param, 'sequence_parallel', False)
+        for name, param in module.named_parameters():
+            sequence_parallel_param = getattr(param, 'sequence_parallel_enabled', False)
             # (@adithyare) adapter training now extends MegatronGPTModel
             # so we have to add this check here to ensure we do not
             # perform all_reduce when grad is None.
